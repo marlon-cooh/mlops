@@ -1,0 +1,2 @@
+2025-09-21 10:59:23,541 - INFO - POST https://q.plataformaintegra.net/ieholandagranada/index.php/doc/auth/control with payload keys=['usuario', 'contrasena']
+2025-09-21 10:59:23,542 - INFO - Login response: 200 OK (final URL: https://q.plataformaintegra.net/ieholandagranada/index.php/doc/inicio/principal)
