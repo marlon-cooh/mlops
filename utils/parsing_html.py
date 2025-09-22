@@ -1,6 +1,5 @@
 from bs4 import BeautifulSoup
 import pandas as pd #type:ignore
-import os
 import logging
 from io import StringIO
 
@@ -12,6 +11,33 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# SIGNATURE COLUMN NAMES
+STUDS_TABLE_COLS = [
+       'Competencia',
+       'CONOCER', 
+       'HACER',
+       'SER', 
+       'CONVIVIR',
+       'Subtotal NIVEL', 
+       'Nota P1', 
+       'Rec P1',
+       'Nota P2', 
+       'Rec P2',
+       'Nota P3',
+       'Rec P3', 
+       'Nota PF', 
+       'Rec PF',
+       'OBS  1',
+       'OBS  2',
+       'OBS  3',
+       'OBS  4',
+       'OBS  5',
+       'LLEGADA TARDE', 
+       'INASISTENCIA JUSTIFICADA',
+       'INASISTENCIA INJUSTIFICADA',
+       'PERMISO', 
+       'RETARDO']
 
 def retrieve_student_info(html_file) -> list:
     """
@@ -73,58 +99,3 @@ def retrieve_grades_table(html_file) -> pd.DataFrame:
         dfs.columns = [" ".join([str(x) for x in tup if str(x) != "nan"]).strip() for tup in dfs.columns.values]  
 
     return dfs
-
-if __name__ == "__main__":
-    # Grades files
-    data_10_1 = "./grades_html/10_1_2grades.html"
-    
-    try:
-        assert os.path.exists(data_10_1), f"File {data_10_1} does not exist."
-    except AssertionError as e:
-        logger.error(e)
-        raise
-    
-    # Prettify and save the HTML file (optional)
-    with open(data_10_1, "r", encoding="utf-8") as file:
-        content = file.read()
-    soup = BeautifulSoup(content, "html.parser")
-    pretty_html = soup.prettify()
-    with open(data_10_1, "w", encoding="utf-8") as file:
-        file.write(pretty_html)
-        
-    # Generate DataFrames.
-    studs_info = retrieve_student_info("./grades_html/10_1_1grades.html")
-    studs_table = retrieve_grades_table(data_10_1)
-    grades_table = retrieve_student_table(data_10_1, "notas_tabla_competencias")
-
-    studs_table.index = studs_info
-    
-    new_cols = [
-       'Competencia',
-       'CONOCER', 
-       'HACER',
-       'SER', 
-       'CONVIVIR',
-       'Subtotal NIVEL', 
-       'Nota P1', 
-       'Rec P1',
-       'Nota P2', 
-       'Rec P2',
-       'Nota P3',
-       'Rec P3', 
-       'Nota PF', 
-       'Rec PF',
-       'OBS  1',
-       'OBS  2',
-       'OBS  3',
-       'OBS  4',
-       'OBS  5',
-       'LLEGADA TARDE', 
-       'INASISTENCIA JUSTIFICADA',
-       'INASISTENCIA INJUSTIFICADA',
-       'PERMISO', 
-       'RETARDO']
-    studs_table.columns = new_cols
-    
-    # Redirect this info into a .pkl file.
-    print(studs_table)
