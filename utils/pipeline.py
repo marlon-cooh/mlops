@@ -1,6 +1,7 @@
 import pandas as pd #type:ignore
 from pathlib import Path
 import logging
+from re import search
 
 # Preprocessing.
 from sklearn.preprocessing import OneHotEncoder, FunctionTransformer #type:ignore
@@ -10,6 +11,10 @@ from sklearn.impute import SimpleImputer #type:ignore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+subjects = ['codigo', 'no_lista', 'nombre', 'periodo', 'lect', 'esp', 'mat', 'econ', 'ingl', 'nat', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo', 
+            # 'electiva' # Not considered so far.
+]
 
 def retrieve_processed_dataframes(inpath:str, outpath:str) -> pd.DataFrame:
     """
@@ -113,6 +118,7 @@ def retrieve_processed_dataframes(inpath:str, outpath:str) -> pd.DataFrame:
 def remove_unregistered_students(raw_df:pd.DataFrame) -> pd.DataFrame:
     """
         Cleans the raw dataframe by removing unnecessary columns and rows that do not contain grading information along with students that are not listed in the courses.
+        This function is designed for those dataframes obtained from .parquet files after reading and cleaning HTMLs (look parsing_html.py).
         Args:
             raw_df (pd.DataFrame): The raw dataframe to be cleaned.
         Returns:
@@ -161,6 +167,86 @@ def remove_unregistered_students(raw_df:pd.DataFrame) -> pd.DataFrame:
 
     return merged
 
+def retrieve_grade_reports(inpath:str, cols_to_present=subjects, final_student=95) -> dict:
+    """
+        This function returns a complete, cleaned, and ready-to-eda dataframe from grade reports taken in .xls format from database.
+        (Args):
+            * inpath: Directory where .xls file is stored,
+            * cols_to_present: List of columns to display in the final dataframe, for instance, subjects as: 'nat' (Natural sciences), 'esp' (Spanish), and so on. 
+        Returns:
+            A dictionary of dataframes suitable to eda and train simple models.
+    """
+    
+    # Reading .xsl files
+    inpath = Path(inpath)
+    try:
+        if inpath.exists():
+            tables = pd.read_html(
+                inpath,
+                attrs={"id": "consolidadonotas_periodo_tabla"}
+            )
+    except (FileExistsError, UnicodeDecodeError) as fe:
+        print(f"{fe}: Inpath is not valid and/or does not contain a readable .xls file")
+    
+    # Removing multiindex.    
+    df = tables[0]
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(-1)
+    
+    # Final student (this feature should be arranged).
+    df.loc[:final_student, :].columns
+    
+    # Removing retired students.
+    df['Nombre'] = df['Nombre'].astype('str')
+    
+    indexes_to_drop = df[df['Nombre'].apply(lambda x: bool(search(r"\t", x)))].index.to_list()
+    df.drop(index=indexes_to_drop, axis=0, inplace=True)
+     
+    # Cleaning information.
+    level_grades = df.clean_names(
+        case_type='snake',
+        strip_underscores=True,
+        remove_special=True        
+    ).loc[:final_student, cols_to_present].reset_index().rename(columns={'index':'idx'})
+    
+    level_grades = level_grades.dropna(
+        axis=0,
+        subset=level_grades.columns[2:],
+        how='all'
+    )
+    
+    # Creating dataframes for periods P1 and P2.
+    
+    level_grades_p1 = level_grades[level_grades['idx'] %2 == 0]
+    level_grades_p2 = level_grades[level_grades['idx'] %2 != 0]
+    
+    level_grades_p2['idx'] -= 1
+    level_grades_p2 = level_grades_p2.merge(
+        level_grades_p1,
+        on='idx',
+        how='inner',
+        suffixes=("_p2", "_p1")
+    )[['idx', 'codigo_p1', 'nombre_p1', 'esp_p2', 'mat_p2', 'econ_p2', 'ingl_p2', 'nat_p2', 'fis_p2', 'filo_p2', 'poli_p2', 'ere_p2', 'edufi_p2', 'tecn_p2', 'compo_p2']].rename(
+    columns={
+        'codigo_p1' : 'codigo',
+        'nombre_p1' : 'nombre',
+        'esp_p2': 'esp',
+        'mat_p2': 'mat',
+        'econ_p2': 'econ',
+        'ingl_p2': 'ingl',
+        'nat_p2': 'nat',
+        'fis_p2': 'fis',
+        'filo_p2': 'filo',
+        'poli_p2': 'poli',
+        'ere_p2': 'ere',
+        'edufi_p2': 'edufi',
+        'tecn_p2': 'tecn',
+        'compo_p2': 'compo'
+    }
+)
+    dfs = {"p1" : level_grades_p1, "p2" : level_grades_p2}
+    return dfs
+    
 if __name__ == "__main__":
     
     retrieve_processed_dataframes(
