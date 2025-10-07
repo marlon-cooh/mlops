@@ -110,6 +110,57 @@ def retrieve_processed_dataframes(inpath:str, outpath:str) -> pd.DataFrame:
         except Exception as e:
            logger.error(f"Error processing dataframe {names}: {e}")
 
+def remove_unregistered_students(raw_df:pd.DataFrame) -> pd.DataFrame:
+    """
+        Cleans the raw dataframe by removing unnecessary columns and rows that do not contain grading information along with students that are not listed in the courses.
+        Args:
+            raw_df (pd.DataFrame): The raw dataframe to be cleaned.
+        Returns:
+            pd.DataFrame: The cleaned dataframe.    
+    """
+    # Dropping unnecessary columns.
+    
+    # Unnecessary columns are those that do not relate to grading.
+    cols_to_drop = ['Competencia', 'OBS  1', 'OBS  2', 'OBS  3', 'OBS  4', 'OBS  5']
+    
+    # Keeping only the first 13 columns that relate to grading.
+    cleaned_df = raw_df.drop(columns=cols_to_drop).iloc[:, :13]
+    
+    # # Replacing "None" and pd.NA values with NaN, then dropping rows that are completely empty.
+    cleaned_df = cleaned_df.replace({"None", pd.NA}, inplace=False).reset_index().rename(columns={'index' : 'ESTUDIANTE'})
+
+    # Resetting index and dropping completely empty rows, then creating an auxiliar foreign key.
+    cleaned_df = cleaned_df.reset_index().rename(columns={'index' : 'ID'})
+    cleaned_df = cleaned_df.dropna(how="all", subset=cleaned_df.columns[2:13], inplace=False).dropna(subset=cleaned_df.columns[9], how="all")
+    
+    # Merge to non-grading relative columns.
+    to_merge = raw_df.iloc[:, 19:].reset_index().rename(columns={'index' : 'ESTUDIANTE'}).reset_index().rename(columns={'index' : 'ID'})
+    merged = cleaned_df.merge(
+        to_merge,
+        on=[
+            'ID', 
+            'ESTUDIANTE'
+        ],
+        how='inner'
+    )
+    
+    # Columns where missing values must be binarized.
+    cols = ['Rec P1', 'Rec P2', 'Rec P3', 'Rec PF']
+    merged[cols] = merged[cols].notna().astype("Int64")
+    
+    # Transforming columns to categorical dtype.
+    order = ["S", "A", "B", "b"]
+    cat_cols = ['CONOCER', 'HACER', 'SER', 'CONVIVIR', 'Subtotal NIVEL', 'Nota P1', 'Nota P2', 'Nota P3', 'Nota PF']
+    merged[cat_cols] = merged[cat_cols].replace(
+        {"None" : pd.NA, "": pd.NA}
+    ).apply(
+        lambda s: s.str.strip() if s.dtype =="object" else s
+    ).apply(
+        lambda s : pd.Categorical(s, categories=order, ordered=True)
+    )
+
+    return merged
+
 if __name__ == "__main__":
     
     retrieve_processed_dataframes(
