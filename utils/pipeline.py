@@ -275,6 +275,10 @@ def retrieve_grade_reports(inpath:str, cols_to_present=None, final_student=95) -
     )[new_labels].rename(
     columns=columns_to_replace
 )
+    
+    # Removing unnecessary columns
+    
+    
     dfs = {"p1" : level_grades_p1, "p2" : level_grades_p2}
     return dfs
     
