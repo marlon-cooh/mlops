@@ -1,6 +1,7 @@
 import pandas as pd #type:ignore
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import seaborn as sns #type:ignore
 
 def summary_subject_table(df:pd.DataFrame) -> pd.DataFrame:
@@ -63,34 +64,70 @@ def summary_subject_table(df:pd.DataFrame) -> pd.DataFrame:
             ignore_index=False
         )
     
-    # Drop redundant columns.
+    # Drop redundant columns and `esc_pad`.
     concatenated.drop(columns=concatenated.columns[np.arange(2, len(concatenated.columns), 2)], inplace=True)
-    concatenated = concatenated.rename(columns={df.columns[0]: "nota"})
+    
+    # Rename the first column to 'nota'
+    concatenated = concatenated.rename(columns={concatenated.columns[0]: "nota"})
     
     return concatenated    
 
-def summary_subject_plot(df:pd.DataFrame, palette=None) -> sns.barplot:
+def summary_subject_plot(
+        df:pd.DataFrame, 
+        palette=None, 
+        size=(10, 6),
+        ax: Axes | None = None,
+        show_legend : bool = True,
+        cols: list = []
+        ) -> sns.barplot:
     """
-        This function shows up a complete summary bar plot for all subjects, this strictly receives a cleaned dataframe from retrieve_grade_reports() function.
-        (Args):
-            * df: Ready-to-eda dataframe after being cleaned through utils/pipeline.py function, retrieve_grade_reports().
-        (Returns):
-            A tidy bar plot visualization for each subject classified by grade [b, B, A, S].
+    Plots a summary bar plot for each subject classified by grade [b, B, A, S].
+
+    Args:
+        df: Cleaned dataframe expected by summary_subject_table().
+        palette: Optional seaborn/matplotlib palette.
+        size: Figure size if ax is not provided.
+        ax: Existing matplotlib Axes to draw on. If None, a new fig/ax is created.
+        show_legend: Whether to show legend on this axes.
+
+    Returns:
+        The matplotlib Axes used for plotting.
     """
-    
-    df = summary_subject_table(df)
+    # To control if there are some specific cols to analyse.
+    if len(cols) > 0:
+        df = summary_subject_table(df)[cols]
+    else:
+        df = summary_subject_table(df)
     
     melted_df = df.melt(
         id_vars='nota',
         var_name='materia'
     )
-
+    
+    # Plot settings.
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=size, dpi=110)
+        created_fig = True
+    
     sns.barplot(
         data=melted_df,
         x='nota',
         y='value',
         hue='materia',
-        palette=palette
+        palette=palette,
+        ax=ax
     )
     
-    plt.show()
+    # To control legend display
+    if show_legend:
+        ax.legend(loc='best')
+    else:
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+      
+    if created_fig:
+        plt.tight_layout()
+        
+    return ax
