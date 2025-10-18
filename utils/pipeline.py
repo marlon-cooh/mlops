@@ -3,9 +3,10 @@ from pathlib import Path
 import logging
 import janitor
 from re import search
+from numpy import float64
 
 # Preprocessing.
-from sklearn.preprocessing import OneHotEncoder, FunctionTransformer #type:ignore
+from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder, FunctionTransformer #type:ignore
 from sklearn.compose import ColumnTransformer #type:ignore
 from sklearn.pipeline import Pipeline #type:ignore
 from sklearn.impute import SimpleImputer #type:ignore
@@ -19,6 +20,7 @@ subjects_11 = ['codigo', 'no_lista', 'nombre', 'periodo', 'lect', 'esp', 'mat', 
 
 def retrieve_processed_dataframes(inpath:str, outpath:str) -> pd.DataFrame:
     """
+        (*To be deprecated)
         This function returns a dataframe suitable for training ML models in the context of this project (Grades analysis).
         (Args):
             * inpath : Path associated to .parquet files after reading and cleaning HTMLs.
@@ -186,8 +188,10 @@ def clean_level_grades(df: pd.DataFrame, final_student: int, cols_to_present: li
     ).loc[:final_student, cols_to_present].reset_index().rename(columns={'index':'idx'})
     )
 
+def safe_drop(df:pd.DataFrame, colname:str) -> pd.DataFrame:
+    return df.drop(columns=[colname], errors='ignore')
 
-def retrieve_grade_reports(inpath:str, cols_to_present=None, final_student=95) -> dict:
+def retrieve_grade_reports(inpath:str, cols_to_present=None, final_student=95, **kwargs) -> dict:
     """
         This function returns a complete, cleaned, and ready-to-eda dataframe from grade reports taken in .xls format from database.
         (Args):
@@ -245,6 +249,17 @@ def retrieve_grade_reports(inpath:str, cols_to_present=None, final_student=95) -
         how='all'
     )
     
+    # To segment by period.
+    allowed_periods = {"P1", "P2", "P3"}
+
+    for key, value in kwargs.items():
+        if isinstance(value, str) and value in allowed_periods:
+            level_grades[f'{key}'] = value.strip()
+        else:
+            raise ValueError(
+                "Additional parameters MUST be period indicators: 'P1', 'P2', or 'P3'."
+            )
+                
     # Creating dataframes for periods P1 and P2.
     
     level_grades_p1 = level_grades[level_grades['idx'] %2 == 0].drop(columns={'periodo', 'no_lista'}, axis=1)
@@ -269,20 +284,182 @@ def retrieve_grade_reports(inpath:str, cols_to_present=None, final_student=95) -
     # Creating p2 report.
     level_grades_p2['idx'] -= 1
     level_grades_p2 = level_grades_p2.merge(
-        level_grades_p1,
-        on='idx',
-        how='inner',
-        suffixes=("_p2", "_p1")
-    )[new_labels].rename(
-    columns=columns_to_replace
-)
-    
+            level_grades_p1,
+            on='idx',
+            how='inner',
+            suffixes=("_p2", "_p1")
+        )[new_labels].rename(
+        columns=columns_to_replace
+    )
+            
     # Removing unnecessary columns
-    
-    
-    dfs = {"p1" : level_grades_p1, "p2" : level_grades_p2}
+    if 'esc_pad' in level_grades_p1.columns or 'esc_pad' in level_grades_p2.columns:
+        level_grades_p1 = safe_drop(level_grades_p1, 'esc_pad')
+        level_grades_p2 = safe_drop(level_grades_p2, 'esc_pad')
+        
+    dfs = {
+            "p1" : level_grades_p1, 
+            "p2" : level_grades_p2
+        }
+        
     return dfs
+
+def process_grades_columns(df:pd.DataFrame, cols_to_drop:list = []) -> pd.DataFrame:
+    """
+    This function returns an ordinal encoded version of grades in student report, this version is useful to create visualization or train simple ML models.
+        Args:
+        df: Ready-to-eda DataFrame after being cleaned through utils/pipeline.py function, retrieve_grade_reports().
+        
+        Returns:
+        df: Refined eda DataFrame.
+    """
+    # Rearranging columns
+    # Filtering columns
+    if 'qui' not in set(df.columns.tolist()) and 'lect' in set(df.columns.tolist()):
+        df = df[['idx', 'codigo', 'nombre', 'period', 'lect', 'esp', 'mat', 'econ', 'ingl', 'nat', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo']]
     
+    elif 'nat' not in (df.columns.tolist()):
+        df = df[['idx', 'codigo', 'nombre', 'period', 'lect', 'esp', 'mat', 'econ', 'ingl', 'qui', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo']]
+    
+    elif 'qui' not in set(df.columns.tolist()) and 'lect' not in set(df.columns.tolist()):
+        df = df[['idx', 'codigo', 'nombre', 'period', 'esp', 'ingl', 'edufi', 'art', 'soc', 'ere', 'mat', 'nat', 'tecn', 'compo']]
+    
+    # If there are columns to drop
+    df.drop(columns=[], inplace=True)
+    
+    # Categorical variables
+    cols_to_classify = df.columns[4:].tolist()
+    categories_per_col = [['b', 'B', 'A', 'S']] * len(cols_to_classify)
+    
+    # Ordinal encoder pipeline.
+    cat_ord_pipe = Pipeline(
+    steps=[
+            ("imputer", SimpleImputer(strategy='most_frequent')),
+            ("ordinal", OrdinalEncoder(
+            categories=categories_per_col,
+            handle_unknown='use_encoded_value',
+            unknown_value=-1,
+            dtype=float64
+            ))
+        ]
+    )
+    
+    # CT for ordinal pipeline.
+    pre = ColumnTransformer(
+    transformers=[
+            ('cat', cat_ord_pipe, cols_to_classify)
+        ],
+        remainder='drop',
+        verbose_feature_names_out=True
+    )
+    
+    pre.set_output(transform='pandas')
+    processed_df = pre.fit_transform(df)
+    
+    # Removing added label (cat_) in processed_df
+    processed_df.columns = [c.split("__", 1)[-1] for c in processed_df.columns]
+    
+    processed_df = pd.concat(
+        [df.iloc[:, :4], processed_df],
+        axis=1,
+        ignore_index=False
+    )
+    
+    return processed_df
+
+def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
+    """
+    Prepares student grade DataFrames for machine learning model training by computing performance metrics
+    and optionally categorizing students into performance bands.
+
+    Args:
+        input_dfs (list): List of pandas DataFrames containing student grades. Each DataFrame should:
+            - Have student identifiers in columns 0-3
+            - Contain subject grades in columns 4+
+            - Be pre-processed using retrieve_grade_reports() and process_grades_columns()
+        expose_band (bool, optional): If True, adds performance bands (LOW/MEDIUM/GOOD/EXCELLENT) 
+            based on percentile ranks. Defaults to False.
+
+    Returns:
+        pd.DataFrame: A concatenated DataFrame with additional features:
+            - performance: Sum of grades across all subjects
+            - fundamental: Sum of grades in core subjects (math, spanish, critical reading)
+            - band: (if expose_band=True) Categorical performance level
+            - Filtered to include only relevant subject columns based on grade level
+
+    Features:
+        - Automatically detects available subjects and adapts column selection
+        - Handles missing core subjects when calculating fundamentals
+        - Creates ordered categorical bands using percentile thresholds:
+            * EXCELLENT: >= 90th percentile
+            * GOOD: >= 70th percentile
+            * MEDIUM: >= 40th percentile 
+            * LOW: < 40th percentile
+
+    Example:
+        >>> p1_df = process_grades_columns(retrieve_grade_reports("grade10.xls")["p1"])
+        >>> p2_df = process_grades_columns(retrieve_grade_reports("grade10.xls")["p2"]) 
+        >>> model_df = df_to_model([p1_df, p2_df], expose_band=True)
+    """
+    input_dfs = [df.copy() for df in input_dfs]
+    
+    # Assigning 'performance' values (sum of transformed grades of every subject), this is OPTIONAL.
+    for df in input_dfs:
+        df['performance'] = df[df.columns[4:].tolist()].sum(axis=1)
+        
+    # Assigning 'fundamental' values (sum of transformed grades in español, matemáticas, lectura crítica), this is OPTIONAL
+    fund_cols = ["mat", "esp", "lect"]
+    existing_cols = [col for col in fund_cols if col in input_dfs[0].columns]
+    
+    if not existing_cols:
+        print("⚠️ No matching columns found for 'fundamental'. Skipping creation.")
+    else:
+        for df in input_dfs:
+            df['fundamental'] = df[existing_cols].sum(axis=1)
+        
+    # Creating a band category based on performance. 
+    if expose_band == True:
+        
+        for df in input_dfs:
+            df['performance_pct'] = df.performance.rank(pct=True, axis=0, ascending=True) # Ranking performance
+            df['band'] = df['performance_pct'].apply(
+                lambda x: (
+                    'EXCELLENT' if x >= 0.90 else
+                    'GOOD'      if x >= 0.70 else
+                    'MEDIUM'    if x >= 0.40 else
+                    'LOW'
+                ) if pd.notnull(x) else pd.NA
+            )
+            
+            students_order = ['LOW', 'MEDIUM', 'GOOD', 'EXCELLENT'] # Processing `band` column
+            df.band = pd.Categorical(
+                        values=df.band,
+                        categories=students_order,
+                        ordered=True
+                )
+    
+    # Creating a wrapped df that contains every cleaned df.
+    wrapped_df = pd.concat(
+        objs = [df for df in input_dfs],
+        axis = 0
+    )
+    
+    # Filtering columns
+    if 'qui' not in set(wrapped_df.columns.tolist()) and 'lect' in set(wrapped_df.columns.tolist()):
+        wrapped_df.select_columns(
+                  'idx', 'codigo', 'nombre', 'period', 'lect', 'esp', 'mat', 'econ', 'ingl', 'nat', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo', 'fundamental','band'
+        )
+    elif 'nat' not in (wrapped_df.columns.tolist()) and 'lect' in set(wrapped_df.columns.tolist()):
+        wrapped_df.select_columns(
+        'idx', 'codigo', 'nombre', 'period', 'lect', 'esp', 'mat', 'econ', 'ingl', 'qui', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo', 'fundamental','band'
+    )
+    elif 'qui' not in set(wrapped_df.columns.tolist()) and 'lect' not in set(wrapped_df.columns.tolist()):
+        wrapped_df.select_columns(
+        'idx', 'codigo', 'nombre', 'period', 'esp', 'ingl', 'edufi', 'art', 'soc', 'ere', 'mat', 'nat', 'tecn', 'compo' ,'fundamental','band'
+    )
+    
+    return wrapped_df
+
 if __name__ == "__main__":
     
     retrieve_processed_dataframes(
