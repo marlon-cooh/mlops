@@ -282,7 +282,7 @@ def retrieve_grade_reports(inpath:str, cols_to_present=None, final_student=95, *
     )
     
     # Creating p2 report.
-    level_grades_p2['idx'] -= 1
+    level_grades_p2.loc[:, 'idx'] -= 1
     level_grades_p2 = level_grades_p2.merge(
             level_grades_p1,
             on='idx',
@@ -446,15 +446,15 @@ def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
     
     # Filtering columns
     if 'qui' not in set(wrapped_df.columns.tolist()) and 'lect' in set(wrapped_df.columns.tolist()):
-        wrapped_df.select_columns(
+        wrapped_df.select(
                   'idx', 'codigo', 'nombre', 'period', 'lect', 'esp', 'mat', 'econ', 'ingl', 'nat', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo', 'fundamental','band'
         )
     elif 'nat' not in (wrapped_df.columns.tolist()) and 'lect' in set(wrapped_df.columns.tolist()):
-        wrapped_df.select_columns(
+        wrapped_df.select(
         'idx', 'codigo', 'nombre', 'period', 'lect', 'esp', 'mat', 'econ', 'ingl', 'qui', 'fis', 'filo', 'poli', 'ere', 'edufi', 'tecn', 'compo', 'fundamental','band'
     )
     elif 'qui' not in set(wrapped_df.columns.tolist()) and 'lect' not in set(wrapped_df.columns.tolist()):
-        wrapped_df.select_columns(
+        wrapped_df.select(
         'idx', 'codigo', 'nombre', 'period', 'esp', 'ingl', 'edufi', 'art', 'soc', 'ere', 'mat', 'nat', 'tecn', 'compo' ,'fundamental','band'
     )
     
@@ -462,7 +462,56 @@ def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
 
 if __name__ == "__main__":
     
-    retrieve_processed_dataframes(
-        inpath="../cleaned_data",
-        outpath="../processed_data"
+    # Run cleaning pipeline
+    
+    # Paths
+    grade_configs = [
+        {'grade': '9_2', 'path': '../consolidados/consolidado_902.xls', 'students_p1': 95, 'students_p2': 95},
+        {'grade': '10_1', 'path': '../consolidados/consolidado_1001.xls', 'students_p1': 81, 'students_p2': 81},
+        {'grade': '10_2', 'path': '../consolidados/consolidado_1002.xls', 'students_p1': 81, 'students_p2': 81},
+        {'grade': '10_3', 'path': '../consolidados/consolidado_1003.xls', 'students_p1': 85, 'students_p2': 85},
+        {'grade': '10_4', 'path': '../consolidados/consolidado_1004.xls', 'students_p1': 82, 'students_p2': 83},
+        {'grade': '11_1', 'path': '../consolidados/consolidado_1101.xls', 'students_p1': 81, 'students_p2': 81},
+        {'grade': '11_2', 'path': '../consolidados/consolidado_1102.xls', 'students_p1': 79, 'students_p2': 79},
+        {'grade': '11_3', 'path': '../consolidados/consolidado_1103.xls', 'students_p1': 81, 'students_p2': 81},
+    ]
+        
+    # Processed dataframes.
+    processed_data = {}
+    logger.info("--- Running cleaning pipeline ---")
+    
+    for config in grade_configs:
+        # Setting parameters
+        grade_name = config['grade']
+        path = config['path']
+        
+        # Running retrieve_grades_reports.
+        logger.info(f"Processing grade: {grade_name}...")
+        processed_data_1 = process_grades_columns(
+                                                retrieve_grade_reports(
+                                                                inpath=path, 
+                                                                final_student=config['students_p1'], 
+                                                                period='P1'
+                                                            )['p1']
+                                                        )
+        processed_data_2 = process_grades_columns(
+                                                            retrieve_grade_reports(
+                                                                inpath=path, 
+                                                                final_student=config['students_p2'], 
+                                                                period='P2'
+                                                            )['p2']
+                                                        )
+        processed_df = df_to_model(input_dfs=[processed_data_1, processed_data_2], expose_band=True)
+        processed_data[grade_name] = processed_df
+
+    df = pd.concat(
+        objs = processed_data.values(),
+        axis = 0
+    ).select(
+    'lect', 'esp', 'ingl', 'mat', 'nat', 'qui', 'fis', 'soc', 'filo', 'econ', 'poli', 'tecn', 'edufi', 'art', 'ere', 'compo', 'performance', 'band'
     )
+       
+    logger.info(f"Dataframes: {df}")
+    
+    df.to_parquet("../cleaned_data/grade_summary.parquet")
+    logger.info(f"Dataframe saved.")
