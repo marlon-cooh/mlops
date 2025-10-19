@@ -424,9 +424,9 @@ def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
             df['performance_pct'] = df.performance.rank(pct=True, axis=0, ascending=True) # Ranking performance
             df['band'] = df['performance_pct'].apply(
                 lambda x: (
-                    'EXCELLENT' if x >= 0.90 else
-                    'GOOD'      if x >= 0.70 else
-                    'MEDIUM'    if x >= 0.40 else
+                    'EXCELLENT' if x >= 0.85 else
+                    'GOOD'      if x >= 0.60 else
+                    'MEDIUM'    if x >= 0.50 else
                     'LOW'
                 ) if pd.notnull(x) else pd.NA
             )
@@ -466,7 +466,7 @@ if __name__ == "__main__":
     
     # Paths
     grade_configs = [
-        {'grade': '9_2', 'path': '../consolidados/consolidado_902.xls', 'students_p1': 95, 'students_p2': 95},
+        # {'grade': '9_2', 'path': '../consolidados/consolidado_902.xls', 'students_p1': 95, 'students_p2': 95},
         {'grade': '10_1', 'path': '../consolidados/consolidado_1001.xls', 'students_p1': 81, 'students_p2': 81},
         {'grade': '10_2', 'path': '../consolidados/consolidado_1002.xls', 'students_p1': 81, 'students_p2': 81},
         {'grade': '10_3', 'path': '../consolidados/consolidado_1003.xls', 'students_p1': 85, 'students_p2': 85},
@@ -489,18 +489,18 @@ if __name__ == "__main__":
         logger.info(f"Processing grade: {grade_name}...")
         processed_data_1 = process_grades_columns(
                                                 retrieve_grade_reports(
-                                                                inpath=path, 
-                                                                final_student=config['students_p1'], 
-                                                                period='P1'
-                                                            )['p1']
-                                                        )
+                                                    inpath=path, 
+                                                    final_student=config['students_p1'], 
+                                                    period='P1'
+                                                    )['p1'].rename(columns={"nat":"qui"})
+                                                )
         processed_data_2 = process_grades_columns(
-                                                            retrieve_grade_reports(
-                                                                inpath=path, 
-                                                                final_student=config['students_p2'], 
-                                                                period='P2'
-                                                            )['p2']
-                                                        )
+                                                    retrieve_grade_reports(
+                                                        inpath=path, 
+                                                        final_student=config['students_p2'], 
+                                                        period='P2'
+                                                    )['p2']
+                                                ).rename(columns={"nat":"qui"})
         processed_df = df_to_model(input_dfs=[processed_data_1, processed_data_2], expose_band=True)
         processed_data[grade_name] = processed_df
 
@@ -508,10 +508,10 @@ if __name__ == "__main__":
         objs = processed_data.values(),
         axis = 0
     ).select(
-    'lect', 'esp', 'ingl', 'mat', 'nat', 'qui', 'fis', 'soc', 'filo', 'econ', 'poli', 'tecn', 'edufi', 'art', 'ere', 'compo', 'performance', 'band'
+    'lect', 'esp', 'ingl', 'mat', 'qui', 'fis', 'filo', 'econ', 'poli', 'tecn', 'edufi', 'ere', 'compo', 'fundamental', 'band'
     )
        
-    logger.info(f"Dataframes: {df}")
+    logger.info(f"Dataframes: {df.isna().sum()}")
     
     df.to_parquet("../cleaned_data/grade_summary.parquet")
     logger.info(f"Dataframe saved.")
