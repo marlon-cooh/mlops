@@ -425,11 +425,15 @@ def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
             df['band'] = df['performance_pct'].apply(
                 lambda x: (
                     'EXCELLENT' if x >= 0.85 else
-                    'GOOD'      if x >= 0.60 else
-                    'MEDIUM'    if x >= 0.50 else
-                    'LOW'
+                    'GOOD'      if (x >= 0.60 and x < 0.85) else
+                    'MEDIUM'    if (x >= 0.50 and x < 0.60) else
+                    'LOW'       if (x >= 0.20 and x < 0.50) else
+                    'VERY LOW'
                 ) if pd.notnull(x) else pd.NA
             )
+            
+            remove_very_low_results = df[df.band == 'VERY LOW']
+            df.drop(index=remove_very_low_results.index, inplace=True)
             
             students_order = ['LOW', 'MEDIUM', 'GOOD', 'EXCELLENT'] # Processing `band` column
             df.band = pd.Categorical(

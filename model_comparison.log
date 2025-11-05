@@ -1,0 +1,5 @@
+2025-10-29 17:19:45,852 - __main__ - INFO - Running GridSearchCV for model: LogisticRegression
+2025-10-29 17:24:14,466 - __main__ - INFO - Running GridSearchCV for model: LogisticRegression
+2025-10-29 17:24:17,258 - __main__ - INFO - Best parameters for LogisticRegression: 0.7529411764705882
+2025-10-29 17:24:22,791 - __main__ - INFO - Running GridSearchCV for model: RandomForest
+2025-10-29 17:24:24,960 - __main__ - INFO - Best parameters for RandomForest: 0.711764705882353

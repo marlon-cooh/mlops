@@ -1,14 +1,15 @@
-# from tqdm import tqdm
-# import argparse
-# import logging
+from tqdm import tqdm
+import logging
+import subprocess
 import pandas as pd #type:ignore
 
 # sklearn.
 from sklearn.model_selection import train_test_split, GridSearchCV #type:ignore
 from sklearn.linear_model import LogisticRegression #type:ignore
 from sklearn.ensemble import RandomForestClassifier #type:ignore
-from sklearn.metrics import classification_report, roc_curve, roc_auc_score, confusion_matrix, accuracy_score #type:ignore
-# from sklearn.decomposition import PCA, KernelPCA #type:ignore
+from sklearn.metrics import classification_report, accuracy_score, f1_score, roc_auc_score#type:ignore
+from imblearn.over_sampling import RandomOverSampler, SMOTE, ADASYN #type:ignore
+from sklearn.decomposition import PCA #type:ignore
 
 # mlflow.
 import mlflow #type:ignore
@@ -20,80 +21,137 @@ MODELS_CONFIG = {
     'LogisticRegression' : {
         'model' : LogisticRegression(random_state=42, max_iter=2000),
         'params' : {
-            # 'model__C' : 0.1,
-            # 'model__C' : [0.1, 1, 10],
-            # 'model__penalty' : ['l1', 'l2'],
-            # 'model__solver' : ['liblinear']
-            'penalty' : 'l2',
-            'solver' : 'liblinear',
-            'random_state' : 42,
-            'max_iter' : 2000
+            'C': [0.01, 0.1, 1, 10],
+            'penalty': ['l1', 'l2'],
+            'solver': ['liblinear']
         }
     },
     'RandomForest' : {
         'model' : RandomForestClassifier(random_state=42),
         'params' : {
-            'model__n_estimators' : [100, 200],
-            'model__nmax_depth' : [10, 20],
-            'model__criterion' : ['gini', 'entropy']
+            'n_estimators' : [100, 200],
+            'max_depth' : [10, 20],
+            'criterion' : ['gini', 'entropy']
         }
     }
 }
 
-def main() -> None:
+# --- 2. Setting logger ----
+# Main logger.
+logger = logging.getLogger("ModelComparison")
+logger.setLevel(
+    level=logging.INFO
+)
+# Format for logger.
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# File handler.
+file_handler = logging.FileHandler("model_comparison.log")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+# Console handler (only INFO)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+
+def main(host="127.0.0.1", port=5000) -> None:
     """Main function to run the model comparison experiments."""
-    
+
     # Import data.
     data = pd.read_parquet(path='./cleaned_data/grade_summary.parquet')
     X = data.drop(columns=['band'])
     y = data['band'].to_numpy().ravel()
     
-    
+    # Train-test split.
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, random_state=42, stratify=y
     )
-    params_lr = MODELS_CONFIG['LogisticRegression']['params']
+      
+    # Applying PCA for dimensionality reduction.
+    pca = PCA(n_components=0.85, random_state=42)
+    X_train_pca = pca.fit_transform(X_train)
+    X_test_pca = pca.transform(X_test)
     
-    # Training model.
-    lr = LogisticRegression(**params_lr)
-    lr.fit(X_train, y_train)
-    
-    # Predict on the test set.
-    y_pred = lr.predict(X_test)
-    
-    # Calculate metrics
-    acc = accuracy_score(y_test, y_pred) # This is the metric to keep track of.
-    
-    # MLflow experiment setup.
-    mlflow.set_tracking_uri(uri="http://127.0.0.1:5000")
-    
-    # Create a new MLflow Experiment
-    mlflow.set_experiment("MLflow Quickstart")
-    
-    # Start an MLflow run
-    with mlflow.start_run():
-        
-        # Log the hyperparams
-        mlflow.log_params(params_lr)
-        
-        # Log the loss metric
-        mlflow.log_metric("accuracy", acc)
-        
-        # Infer the model signature
-        signature = infer_signature(X_train, lr.predict(X_train))
-        
-        # Setting a tag that we can use to remind this model.
-        mlflow.set_tag("Training info", "Very basic LR model for La Holanda analysis.")
-        
-        # Log the model, which inherits the parameters and metric
-        model_info = mlflow.sklearn.log_model(
-            sk_model=lr,
-            artifact_path="la_holanda_model",
-            signature=signature,
-            input_example=X_train.iloc[:5],
-            registered_model_name="tracking-quickstart"
+    # Treating imbalance.
+    ros = ADASYN(
+            sampling_strategy='minority',
+            n_neighbors=5,
+            random_state=42
         )
-        
+    X_train_res, y_train_res = ros.fit_resample(X_train_pca, y_train)
+    
+    # Opening MLflow server as a subprocess.
+    mlflow_process = subprocess.Popen(
+        ["mlflow", "server",
+         "--host", host,
+         "--port", str(port)
+         ]
+    )
 
+    logger.info(f"✅ MLflow server started at http://{host}:{port}")
+    
+    # Finding best model.
+    for model in tqdm(MODELS_CONFIG.keys(), desc="Training models"):
+        
+        logger.info(f"Running GridSearchCV for model: {model}")
+        
+        # Calling hyperparam optimizer.
+        gcv = GridSearchCV(
+            estimator=MODELS_CONFIG[model]['model'],
+            param_grid=MODELS_CONFIG[model]['params'],
+            scoring='accuracy',
+            cv=5,
+            n_jobs=-1
+        )
+
+        
+        # Training model.
+        gcv.fit(X_train_res, y_train_res)
+            
+        # Predict on the test set.
+        y_pred = gcv.predict(X_test_pca)
+        
+        # Calculate metrics
+        acc = accuracy_score(y_test, y_pred) # This is the metric to keep track of.
+        f1 = f1_score(y_test, y_pred, average='weighted')
+        logger.info(f"Best parameters for {model}: {acc}")
+    
+        # MLflow experiment setup.
+        mlflow.set_tracking_uri(uri="http://127.0.0.1:5000")
+        
+        # Create a new MLflow Experiment
+        mlflow.set_experiment("MLflow GridSearchCV Experiment")
+        
+        # Start an MLflow run
+        with mlflow.start_run():
+            
+            # Log the hyperparams
+            mlflow.log_params(gcv.best_params_)
+            
+            # Log the loss metric
+            mlflow.log_metric("accuracy", acc)
+            mlflow.log_metric("f1 score", f1)
+            # mlflow.log_metric("auc", roc_auc)
+            
+            # Infer the model signature
+            signature = infer_signature(X_train_pca, gcv.predict(X_train_pca))
+            
+            # Setting a tag that we can use to remind this model.
+            mlflow.set_tag("Training info", f"{MODELS_CONFIG[model]['model']} for La Holanda analysis.")
+            
+            # Log the model, which inherits the parameters and metric
+            model_info = mlflow.sklearn.log_model(
+                sk_model=gcv,
+                name="la_holanda_model",
+                signature=signature,
+                input_example=X_train.iloc[:5],
+                registered_model_name="tracking-quickstart"
+            )
+    
+    logger.info("Model comparison experiments completed.")
+    mlflow_process.terminate()
+    mlflow_process.wait()
+    
 if __name__ == "__main__":
     main()
