@@ -3,7 +3,7 @@ from pathlib import Path
 import logging
 import janitor
 from re import search
-from numpy import float64
+import numpy as np #type:ignore
 
 # Preprocessing.
 from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder, FunctionTransformer #type:ignore
@@ -339,7 +339,7 @@ def process_grades_columns(df:pd.DataFrame, cols_to_drop:list = []) -> pd.DataFr
             categories=categories_per_col,
             handle_unknown='use_encoded_value',
             unknown_value=-1,
-            dtype=float64
+            dtype=np.float64
             ))
         ]
     )
@@ -367,7 +367,7 @@ def process_grades_columns(df:pd.DataFrame, cols_to_drop:list = []) -> pd.DataFr
     
     return processed_df
 
-def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
+def df_to_model(input_dfs:list) -> pd.DataFrame:
     """
     Prepares student grade DataFrames for machine learning model training by computing performance metrics
     and optionally categorizing students into performance bands.
@@ -377,20 +377,19 @@ def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
             - Have student identifiers in columns 0-3
             - Contain subject grades in columns 4+
             - Be pre-processed using retrieve_grade_reports() and process_grades_columns()
-        expose_band (bool, optional): If True, adds performance bands (LOW/MEDIUM/GOOD/EXCELLENT) 
-            based on percentile ranks. Defaults to False.
 
     Returns:
         pd.DataFrame: A concatenated DataFrame with additional features:
             - performance: Sum of grades across all subjects
             - fundamental: Sum of grades in core subjects (math, spanish, critical reading)
-            - band: (if expose_band=True) Categorical performance level
+            - band: Categorical performance level
             - Filtered to include only relevant subject columns based on grade level
 
     Features:
         - Automatically detects available subjects and adapts column selection
         - Handles missing core subjects when calculating fundamentals
         - Creates ordered categorical bands using percentile thresholds:
+    MODIFY THIS ⚠️⚠️⚠️⚠️
             * EXCELLENT: >= 90th percentile
             * GOOD: >= 70th percentile
             * MEDIUM: >= 40th percentile 
@@ -418,29 +417,29 @@ def df_to_model(input_dfs:list, expose_band:bool=False) -> pd.DataFrame:
             df['fundamental'] = df[existing_cols].sum(axis=1)
         
     # Creating a band category based on performance. 
-    if expose_band == True:
+    for df in input_dfs:
         
-        for df in input_dfs:
-            df['performance_pct'] = df.performance.rank(pct=True, axis=0, ascending=True) # Ranking performance
-            df['band'] = df['performance_pct'].apply(
-                lambda x: (
-                    'EXCELLENT' if x >= 0.85 else
-                    'GOOD'      if (x >= 0.60 and x < 0.85) else
-                    'MEDIUM'    if (x >= 0.50 and x < 0.60) else
-                    'LOW'       if (x >= 0.20 and x < 0.50) else
-                    'VERY LOW'
-                ) if pd.notnull(x) else pd.NA
+        # Cutpoints.
+        q25, q50, q75, q90 = np.quantile(df["performance"], [0.25, 0.5, 0.75, 0.9])
+        df['band'] = df['performance'].apply(
+            lambda x: (
+                'EXCELLENT' if x >= q90 else
+                'GOOD'      if (x >= q75 and x < q90) else
+                'MEDIUM'    if (x >= q50 and x < q75) else
+                'LOW'       if (x >= q25 and x < q50) else
+                'VERY LOW'
+            ) if pd.notnull(x) else pd.NA
+        )
+        
+        # remove_very_low_results = df[df.band == 'VERY LOW']
+        # df.drop(index=remove_very_low_results.index, inplace=True)
+        
+        students_order = ['VERY LOW', 'LOW', 'MEDIUM', 'GOOD', 'EXCELLENT'] # Processing `band` column
+        df.band = pd.Categorical(
+                    values=df.band,
+                    categories=students_order,
+                    ordered=True
             )
-            
-            remove_very_low_results = df[df.band == 'VERY LOW']
-            df.drop(index=remove_very_low_results.index, inplace=True)
-            
-            students_order = ['LOW', 'MEDIUM', 'GOOD', 'EXCELLENT'] # Processing `band` column
-            df.band = pd.Categorical(
-                        values=df.band,
-                        categories=students_order,
-                        ordered=True
-                )
     
     # Creating a wrapped df that contains every cleaned df.
     wrapped_df = pd.concat(
@@ -505,7 +504,7 @@ if __name__ == "__main__":
                                                         period='P2'
                                                     )['p2']
                                                 ).rename(columns={"nat":"qui"})
-        processed_df = df_to_model(input_dfs=[processed_data_1, processed_data_2], expose_band=True)
+        processed_df = df_to_model(input_dfs=[processed_data_1, processed_data_2])
         processed_data[grade_name] = processed_df
 
     df = pd.concat(
