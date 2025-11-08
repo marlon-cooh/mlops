@@ -16,6 +16,7 @@ from sklearn.decomposition import PCA #type:ignore
 # mlflow.
 import mlflow #type:ignore
 from mlflow.models import infer_signature #type:ignore
+from mlflow.tracking import MlflowClient #type:ignore
 
 
 # ---- 1. Model and parameter Grid configuration ----
@@ -38,7 +39,15 @@ MODELS_CONFIG = {
     }
 }
 
-# --- 2. Setting logger ----
+EXPERIMENT_NAME = "LaHolandaPerformance"
+REGISTERED_MODEL_NAME = "jurgendhilfe-weltweit"
+DATA_PATH = "./cleaned_data/grade_summary.parquet"
+
+# # --- 2. Setting Mlflow client ---
+# client = MlflowClient(tracking_uri="sqlite:///mlflow.db")
+# client.create_experiment(name=EXPERIMENT_NAME)
+
+# --- 3. Setting logger ----
 # Main logger.
 logger = logging.getLogger("ModelComparison")
 logger.setLevel(
@@ -64,39 +73,55 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+# ---- 4. Data Preparation ----
+# Loading data.
+def get_train_data(df_path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    data = pd.read_parquet(path=df_path)
+    X = data.drop(columns=['band'])
+    y = data['band'].to_numpy().ravel()
+            
+    # Train-test split.
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
+
+    return X_train, X_test, y_train, y_test
+
 def main(host="127.0.0.1", port=5000) -> None:
     """Main function to run the model comparison experiments."""
-    
-    try:
-        # Import data.
-        data = pd.read_parquet(path='./cleaned_data/grade_summary.parquet')
-        X = data.drop(columns=['band'])
-        y = data['band'].to_numpy().ravel()
-        
-        # Train-test split.
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.3, random_state=42, stratify=y
+
+    X_train, X_test, y_train, y_test = get_train_data(DATA_PATH)
+    try:        
+        # Opening MLflow server as a subprocess.
+        mlflow_process = subprocess.Popen(
+            [
+                "mlflow", "server",
+                "--backend-store-uri", "sqlite:///mlflow.db",
+                "--default-artifact-root", "./mlruns",
+                "--host", host,
+                "--port", str(port)
+            ]
         )
+
+        logger.info(f"✅ MLflow server started at http://{host}:{port}")
+        try:
+            client =  MlflowClient(tracking_uri=f"http://{host}:{port}")
+            exp = client.get_experiment_by_name(EXPERIMENT_NAME)
+            if exp and exp.lifecycle_stage == 'deleted':
+                client.restore_experiment(exp.experiment_id)
+                logger.info(f"Restored deleted experiment: {EXPERIMENT_NAME}")
+        except Exception as e:
+            logger.warning(f"Could not restore experiment: {e}")
         
         # Applying PCA for dimensionality reduction.
         X_train = X_train.astype(int)
         pca = PCA(n_components=0.8, random_state=42)
         X_train_pca = pca.fit_transform(X_train)
         X_test_pca = pca.transform(X_test)
-        
+
         # Treating imbalance with SMOTEN.
         smoten = SMOTEN(random_state=42)
         X_train_res, y_train_res = smoten.fit_resample(X_train_pca, y_train)
-        
-        # Opening MLflow server as a subprocess.
-        mlflow_process = subprocess.Popen(
-            ["mlflow", "server",
-            "--host", host,
-            "--port", str(port)
-            ]
-        )
-
-        logger.info(f"✅ MLflow server started at http://{host}:{port}")
         
         # Finding best model.
         for model in tqdm(MODELS_CONFIG.keys(), desc="Training models"):
@@ -117,20 +142,22 @@ def main(host="127.0.0.1", port=5000) -> None:
                 
             # Predict on the test set.
             y_pred = gcv.predict(X_test_pca)
+            # y_pred_proba = gcv.predict_proba(X_test_pca)[:, 1]
             
             # Calculate metrics
             acc = accuracy_score(y_test, y_pred) # This is the metric to keep track of.
             f1 = f1_score(y_test, y_pred, average='weighted')
-            logger.info(f"Best parameters for {model}: {acc}")
+            # roc_score = roc_auc_score(y_test, y_pred_proba)
+            logger.info(f"Best parameters for {model}: {f1}")
         
             # MLflow experiment setup.
-            mlflow.set_tracking_uri(uri="http://127.0.0.1:5000")
+            mlflow.set_tracking_uri(uri="sqlite:///mlflow.db")
             
             # Create a new MLflow Experiment
-            mlflow.set_experiment("MLflow GridSearchCV Experiment")
+            mlflow.set_experiment(EXPERIMENT_NAME)
             
             # Start an MLflow run
-            with mlflow.start_run():
+            with mlflow.start_run() as run:
                 
                 # Log the hyperparams
                 mlflow.log_params(gcv.best_params_)
@@ -138,7 +165,7 @@ def main(host="127.0.0.1", port=5000) -> None:
                 # Log the loss metric
                 mlflow.log_metric("accuracy", acc)
                 mlflow.log_metric("f1 score", f1)
-                # mlflow.log_metric("auc", roc_auc)
+                # mlflow.log_metric("roc_auc", roc_score)
                 
                 # Infer the model signature
                 signature = infer_signature(X_train_pca, gcv.predict(X_train_pca))
@@ -149,10 +176,10 @@ def main(host="127.0.0.1", port=5000) -> None:
                 # Log the model, which inherits the parameters and metric
                 model_info = mlflow.sklearn.log_model(
                     sk_model=gcv,
-                    name="la_holanda_model",
+                    artifact_path="la_holanda_model",
                     signature=signature,
                     input_example=X_train.iloc[:5],
-                    registered_model_name="tracking-quickstart"
+                    registered_model_name=REGISTERED_MODEL_NAME
                 )
                 
                 logger.info(f"Model {model} logged in MLflow with run ID: {model_info.run_id}")

@@ -431,10 +431,17 @@ def df_to_model(input_dfs:list) -> pd.DataFrame:
             ) if pd.notnull(x) else pd.NA
         )
         
-        # remove_very_low_results = df[df.band == 'VERY LOW']
-        # df.drop(index=remove_very_low_results.index, inplace=True)
+        # Quick reclassification of `band` column.
         
-        students_order = ['VERY LOW', 'LOW', 'MEDIUM', 'GOOD', 'EXCELLENT'] # Processing `band` column
+        df['band'] = pd.Categorical(df['band']) # Convert to categorical.
+        
+        df.loc[df['band'] == 'LOW', 'band'] = 'MEDIUM' # Merging LOW and MEDIUM
+        df.loc[df['band'] == 'VERY LOW', 'band'] = 'LOW' #Merging VERY LOW and LOW
+        df['band'] = df['band'].cat.add_categories('HIGH')
+        df.loc[df['band'].isin(['GOOD', 'EXCELLENT']), 'band'] = 'HIGH' #Merging GOOD and EXCELLENT as new category HIGH.
+        df['band'] = df['band'].cat.remove_unused_categories()
+
+        students_order = ['LOW', 'MEDIUM', 'HIGH'] # Processing `band` column
         df.band = pd.Categorical(
                     values=df.band,
                     categories=students_order,
