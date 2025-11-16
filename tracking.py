@@ -87,6 +87,20 @@ def get_train_data(df_path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series,
 
     return X_train, X_test, y_train, y_test
 
+def reducing_dimensionality(x_train, x_test) -> tuple:
+    """Applies PCA to reduce dimensionality of the data.
+    Args:
+        X_train (pd.DataFrame): training data
+        X_test (pd.DataFrame): test data
+    Returns:
+        tuple: transformed training and test data
+    """
+    pca = PCA(n_components=0.8, random_state=42)
+    X_train_pca = pca.fit_transform(x_train)
+    X_test_pca = pca.transform(x_test)
+    
+    return X_train_pca, X_test_pca
+
 def main(host="127.0.0.1", port=5000) -> None:
     """Main function to run the model comparison experiments."""
 
@@ -113,12 +127,13 @@ def main(host="127.0.0.1", port=5000) -> None:
         except Exception as e:
             logger.warning(f"Could not restore experiment: {e}")
         
-        # Applying PCA for dimensionality reduction.
-        X_train = X_train.astype(int)
-        pca = PCA(n_components=0.8, random_state=42)
-        X_train_pca = pca.fit_transform(X_train)
-        X_test_pca = pca.transform(X_test)
-
+        # # Applying PCA for dimensionality reduction.
+        # X_train = X_train.astype(int)
+        # pca = PCA(n_components=0.8, random_state=42)
+        # X_train_pca = pca.fit_transform(X_train)
+        # X_test_pca = pca.transform(X_test)
+        X_train_pca, X_test_pca = reducing_dimensionality(X_train, X_test)
+        
         # Treating imbalance with SMOTEN.
         smoten = SMOTEN(random_state=42)
         X_train_res, y_train_res = smoten.fit_resample(X_train_pca, y_train)
