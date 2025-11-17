@@ -32,25 +32,51 @@ def test_model_from_mlflow(model_name:str, stage:str, X_test:csr_matrix, y_test)
     acc_score = round(f1_score(y_test, y_pred, average='weighted'), 2)
     return {"f1_score": acc_score}
 
-def promote_model(tracking_uri:str, exp_name:str, model_name:str, version:int, stage:int):
+def best_experiment(tracking_uri:str, metric:str) -> str:
+    """this function retrieves experiment_id from best experiment based on a selected tracking metric."""
+    
+    client = MlflowClient(tracking_uri=tracking_uri)
+    experiments = client.search_experiments()
+    # if len(experiments) > 1:
+    scores = {}
+    for exp in experiments:
+       runs = client.search_runs(
+           experiment_ids=[exp.experiment_id]
+       )
+       scores.update({r.info.run_id:r.data.metrics[metric] for r in runs})
+    best_run_id = max(scores, key=scores.get)
+    best_score = scores[best_run_id]
+    logger.info(f"Experiment: {exp.name}, Best Run ID: {best_run_id}, Best {metric}: {best_score}")
+    # else:
+    #     # Best run based on f1 score
+    #     scores = {r.info.run_id:r.data.metrics[metric] for r in runs}
+    #     best_run_id = max(scores, key=scores.get)
+    #     logger.info(f"Best run ID: {best_run_id}, F1 Score: {scores[best_run_id]}")
+    
+    return client, best_run_id
+
+def promote_model(
+        client:mlflow.tracking.client.MlflowClient, 
+        best_run_id:str, 
+        model_name:str, 
+        version:int, 
+        stage:str
+    ):
     """
         this function promotes the best model to production.
     Args:
-        * tracking_uri (str): mlflow tracking uri
-        * exp_name (str): experiment name
+        * client (mlflow.tracking.client.MlflowClient): mlflow tracking client,
+        * best_run_id: tag pointing run with best performance according to usage in `best_experiment()` function,
+        * model_name (str): model name,
+        * version (int): model version,
+        * stage (str): Model stage, one of:
+            - "None": Initial stage (default)
+            - "Staging": Model in staging/testing phase
+            - "Production": Model in production
+            - "Archived": Model archived/deprecated
         
     """
-    client = MlflowClient(tracking_uri=tracking_uri)
-    exp = client.get_experiment_by_name(exp_name)
-    runs = client.search_runs(
-        experiment_ids=[exp.experiment_id]
-    )
-
-    # Best run based on f1 score
-    scores = {r.info.run_id:r.data.metrics['f1 score'] for r in runs}
-    best_run_id = max(scores, key=scores.get)
-    logger.info(f"Best run ID: {best_run_id}, F1 Score: {scores[best_run_id]}")
-
+    
     # Registering best model.
     mlflow.register_model(model_uri=f"runs:/{best_run_id}/la_holanda_model",
         name=model_name
@@ -75,19 +101,27 @@ def promote_model(tracking_uri:str, exp_name:str, model_name:str, version:int, s
     return f"The model version {version_.version} was transitioned to Production on {datetime.today().date()}"
 
 if __name__ == "__main__":
-
-    # Parameters.
-    model_version = 9
-    stage = "Production"
     
     # Output from get_train_data and reducing_dimensionality/
     X_train, X_test, y_train, y_test = get_train_data(DATA_PATH)
     X_train_pca, X_test_pca = reducing_dimensionality(X_train, X_test)
     logger = logger_setup("ModelRegistry.log")
     
+    # Opening client and finding best model.
+    client, best_model = best_experiment(
+        tracking_uri=MLFLOW_TRACKING_URI,
+        metric="f1 score"
+    )
+    
+    logger.info(f"{client} was successfully opened, with best experiment tag as {best_model}")
+    
+    # Stage settings.
+    stage = "Production"
+    model_version=2
+    
     response = promote_model(
-        tracking_uri=MLFLOW_TRACKING_URI, 
-        exp_name=EXPERIMENT_NAME,
+        client=client,
+        best_run_id=best_model, 
         model_name=MODEL_NAME, 
         version=model_version, 
         stage=stage
