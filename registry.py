@@ -29,8 +29,8 @@ def test_model_from_mlflow(model_name:str, stage:str, X_test:csr_matrix, y_test)
     model_uri = f"models:/{model_name}/{stage}"
     model = mlflow.pyfunc.load_model(model_uri)
     y_pred = model.predict(X_test)
-    acc_score = round(f1_score(y_test, y_pred, average='weighted'), 2)
-    return {"f1_score": acc_score}
+    f1 = round(f1_score(y_test, y_pred, average='weighted'), 2)
+    return {"f1_score": f1}
 
 def best_experiment(tracking_uri:str, metric:str) -> str:
     """this function retrieves experiment_id from best experiment based on a selected tracking metric."""

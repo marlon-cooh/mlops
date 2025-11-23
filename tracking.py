@@ -53,12 +53,12 @@ REGISTERED_MODEL_NAME = "jurgendhilfe-weltweit"
 DATA_PATH = "./cleaned_data/grade_summary.parquet"
 
 # --- 2. Setting logger ----
-logger = logger_setup("model_comparison.log")
+logger = logger_setup("model_comparison", "model_comparison.log")
 
-# --- 3. Loading data ---
+# --- 2. Loading data ---
 X_train, X_test, y_train, y_test = get_train_data(DATA_PATH, 'band')
 
-# --- 4. Launching mlflow process ---
+# --- 3. Launching mlflow process ---
 def launch_mlflow_server(host:str, port:int) -> None:
     """Launch a mlflow server and return the process object for later termination.
     
@@ -84,11 +84,29 @@ def launch_mlflow_server(host:str, port:int) -> None:
     logger.info(f"✅ MLflow server started at http://{host}:{port}")    
     return mlflow_process
     
-def main(timeout:int = 120) -> None:
-    """Main function to run the model comparison experiments.
+def main(exp_list:dict, reg_model:str, timeout:int = 120) -> None:
+    """This function runs a list of experiments given a dictionary of models and tracks models into MLflow.
     
         Args:
-        timeout: Timeout in seconds before terminating MLflow server
+        * exp_list : Structured dict of experiments where instructions about models is showed.
+            >>>
+                "rf_simple": {
+                "experiment_name": "LaHolanda_RF_Simple",
+                "model": RandomForestClassifier(random_state=42),
+                "param_grid": None,
+            },
+            "rf_grid": {
+                "experiment_name": "LaHolanda_RF_Grid",
+                "model": RandomForestClassifier(random_state=42),
+                "param_grid": {
+                    "n_estimators": [100, 200, 500],
+                    "max_depth": [10, 20, 50, 100],
+                    "criterion": ["gini", "entropy"],
+                },
+            }
+            >>>
+        * reg_model: Name of the registered model in MLflow to log models under.
+        * timeout: Timeout in seconds before terminating MLflow server.
     """
 
     start_time = time.time()
@@ -100,7 +118,7 @@ def main(timeout:int = 120) -> None:
         X_train_res, y_train_res = smoten.fit_resample(X_train_pca, y_train)
         
         # Finding best model.
-        for experiment_key, exp in tqdm(EXPERIMENTS.items(), desc="Training models"):
+        for experiment_key, exp in tqdm(exp_list.items(), desc="Training models"):
             
             experiment_name = exp["experiment_name"]
             
@@ -168,7 +186,7 @@ def main(timeout:int = 120) -> None:
                     artifact_path="la_holanda_model",
                     signature=signature,
                     input_example=X_train_pca[:20],
-                    registered_model_name=REGISTERED_MODEL_NAME # jurgendhilfe-weltweit is the model to optimize and deploy.
+                    registered_model_name=reg_model # jurgendhilfe-weltweit is the model to optimize and deploy.
                 )
 
                 logger.info(f"Experiment {experiment_key} logged in MLflow with run ID: {model_info.run_id}")
@@ -185,4 +203,4 @@ if __name__ == "__main__":
     # Launch MLflow server.
     mlflow.set_tracking_uri(uri="sqlite:///mlflow.db")
     # Run main function with timeout.
-    main(timeout=120)
+    main(exp_list=EXPERIMENTS, reg_model=REGISTERED_MODEL_NAME, timeout=120)

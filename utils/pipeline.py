@@ -327,6 +327,9 @@ def process_grades_columns(df:pd.DataFrame, cols_to_drop:list = []) -> pd.DataFr
     # If there are columns to drop
     df.drop(columns=[], inplace=True)
     
+    # If there are missing values (np.nan)
+    df.dropna(subset=df.columns[:], how='any', inplace=True)
+    
     # Categorical variables
     cols_to_classify = df.columns[4:].tolist()
     categories_per_col = [['b', 'B', 'A', 'S']] * len(cols_to_classify)
@@ -502,8 +505,8 @@ if __name__ == "__main__":
                                                     inpath=path, 
                                                     final_student=config['students_p1'], 
                                                     period='P1'
-                                                    )['p1'].rename(columns={"nat":"qui"})
-                                                )
+                                                    )['p1']
+                                                ).rename(columns={"nat":"qui"})
         processed_data_2 = process_grades_columns(
                                                     retrieve_grade_reports(
                                                         inpath=path, 
