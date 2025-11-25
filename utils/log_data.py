@@ -5,11 +5,11 @@ from sklearn.decomposition import PCA #type:ignore
 from sklearn.model_selection import train_test_split
 
 
-def logger_setup(logger_name: str) -> None:
+def logger_setup(logger_name: str, logger_filename:str) -> None:
     """Sets up logger for the module."""
     
     # Main logger.
-    logger = logging.getLogger()
+    logger = logging.getLogger(logger_name)
 
     if logger.handlers:
         return logger
@@ -24,7 +24,7 @@ def logger_setup(logger_name: str) -> None:
 
     # File -> INFO+
     file_handler = RotatingFileHandler(
-        logger_name,
+        logger_filename,
         maxBytes=1024*1024,  # 1MB
         backupCount=5
     )

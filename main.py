@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Standard library imports
 from datetime import datetime
 from tqdm import tqdm
@@ -18,7 +19,7 @@ from sklearn.ensemble import RandomForestClassifier #type:ignore
 # Utils libraries
 from utils.pipeline import retrieve_grade_reports, process_grades_columns, df_to_model
 from utils.log_data import logger_setup
-from registry import best_experiment, test_model_from_mlflow
+from registry import best_experiment as bexp, test_model_from_mlflow
 
 @task(retries=3, retry_delay_seconds=2,
       name="Returns two clean grade reports for period 1 and period 2.", 
@@ -160,17 +161,16 @@ def run_experiments_in_mlflow(train_info:tuple, exp_list:dict, reg_model:str) ->
       name="Register best model respect to a selected metric (i.e. f1, roc-auc, etc.) from a list of experiments in Mlflow.", 
       tags=["main_flow", "best_model", "promotion"])
 def best_experiment(tracking_uri:str, metric:str = 'f1 score') -> tuple:
-    client, best_run_id = best_experiment(tracking_uri, metric)
+    client, best_run_id = bexp(tracking_uri, metric)
     return client, best_run_id
 
 @task(retries=3, retry_delay_seconds=2,
       name="Promote best model to Production stage in MLflow Model Registry.", 
       tags=["model_promotion", "mlflow_registry", "production"])
-def promote_model(
+def change_model_status(
         client, 
         best_run_id:str, 
         model_name:str, 
-        version:int, # This param will be adjusted in the upcoming edits.
         stage:str = "Production"
     ):
     """
@@ -179,7 +179,6 @@ def promote_model(
         * client (mlflow.tracking.client.MlflowClient): mlflow tracking client,
         * best_run_id: tag pointing run with best performance according to usage in `best_experiment()` function,
         * model_name (str): model name,
-        * version (int): model version,
         * stage (str): Model stage, one of:
             - "None": Initial stage (default)
             - "Staging": Model in staging/testing phase
@@ -187,30 +186,45 @@ def promote_model(
             - "Archived": Model archived/deprecated
         
     """
+    # Keep fluent.
+    mlflow.set_tracking_uri(client.tracking_uri)
     
     # Registering best model.
-    mlflow.register_model(model_uri=f"runs:/{best_run_id}/la_holanda_model",
+    model_uri = f"runs:/{best_run_id}/la_holanda_model"
+    mv = mlflow.register_model(model_uri=model_uri,
         name=model_name
     )
-    latest_versions = client.get_latest_versions(name=model_name)
-    for version_ in latest_versions:
-        if version_.version == str(version):
-            client.transition_model_version_stage(
-                name=model_name,
-                version=version,
-                stage=stage,
-                archive_existing_versions=True
-            )
-            logger.info(f"Model {model_name} version {version} promoted to {stage} stage.")
+    new_version = int(mv.version)
+
+    # promoting new version to production.
+    client.transition_model_version_stage(
+        name=model_name,
+        version=new_version,
+        stage=stage,
+        archive_existing_versions=True
+    )
     
-    return f"The model version {version_.version} was transitioned to Production on {datetime.today().date()}"
+    client.update_model_version(
+        name=model_name,
+        version=new_version,
+        description=f"The model version {new_version} was transitioned to Production on {datetime.today().date()}"
+    )
+    
+    return f"{model_name} v{new_version} -> {stage}"
 
 @task(retries=3, retry_delay_seconds=2,
       name="Test promoted model to production stage in MLflow Model Registry.", 
       tags=["model_testing", "mlflow_registry", "production"])
-def test_promoted_model(model_name:str, stage:str, X_test, y_test) -> str:
-    f1_score_description = test_model_from_mlflow(model_name, stage, X_test, y_test)
-    return f1_score_description
+def test_promoted_model(model_name:str, stage:str, X_test, y_test) -> dict:
+    """Tests promoted model in MLflow Model Registry."""
+       
+    f1 = test_model_from_mlflow(
+        model_name=model_name,
+        stage=stage,
+        X_test=X_test,
+        y_test=y_test
+    )
+    return {"f1_score": f1}
 
 @flow
 def la_holanda_students(input_data:list) -> dict:
@@ -248,20 +262,22 @@ def la_holanda_students(input_data:list) -> dict:
     return df
 
 @flow
-def select_and_promote(tracking_uri:str, model_name:str, version:int, metric:str = 'f1 score') -> None:
+def select_and_promote(tracking_uri:str, model_name:str, metric:str = 'f1 score') -> None:
     """Selects and promotes the best model to Production stage in MLflow Model Registry."""
     
-    client, best_run_id = best_experiment(tracking_uri, metric)
-    logger.info(f"{client} was successfully opened, with best experiment tag as {best_run_id}")
+    client_db, best_run_id = best_experiment(tracking_uri, metric)
+    logger.info(f"{client_db} was successfully opened, with best experiment tag as {best_run_id}")
     
+    # Client for promotion.
+    client_uri = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)  
+      
     # Stage settings.
     stage = "Production"
     
-    response = promote_model(
-        client=client,
+    response = change_model_status(
+        client=client_uri,
         best_run_id=best_run_id, 
         model_name=model_name, 
-        version=version, 
         stage=stage
     )
     
@@ -270,10 +286,11 @@ def select_and_promote(tracking_uri:str, model_name:str, version:int, metric:str
 
 if __name__ == "__main__":
     # Tracking URI
-    track_uri = "127.0.0.1:5000"
+    track_uri = "http://127.0.0.1:5000"
+    metric = "f1 score"
     
     # Setting up logger
-    logger = logger_setup('process_track.log')
+    logger = logger_setup('process_track' ,'process_track.log')
 
     # Paths
     GRADES = [
@@ -331,7 +348,7 @@ if __name__ == "__main__":
     logger.info(f"Data has been successfully generated {data.shape}, with training set shape {X_train_res.shape} and test set shape {X_test_pca.shape}.")
     
     # Setting MLflow tracking URI
-    mlflow.set_tracking_uri(uri="sqlite:///mlflow.db")
+    mlflow.set_tracking_uri(uri=track_uri)
     run_experiments_in_mlflow(
         train_info=(X_train_res, X_test_pca, y_train_res, y_test),
         exp_list=EXPERIMENTS,
@@ -341,7 +358,8 @@ if __name__ == "__main__":
     logger.info(f"Model {REGISTERED_MODEL_NAME} has been registered.")
     
     # Promoting to production best model
-    select_and_promote(tracking_uri=track_uri, model_name=REGISTERED_MODEL_NAME, version=3, metric='f1 score')
+    select_and_promote(tracking_uri=track_uri, model_name=REGISTERED_MODEL_NAME, metric='f1 score')
+    logger.info(f"Model {REGISTERED_MODEL_NAME} has been promoted to Production stage.")
     
     # Testing promoted model
     f1_description = test_promoted_model(
@@ -350,4 +368,4 @@ if __name__ == "__main__":
         X_test=X_test_pca,
         y_test=y_test
     )
-    logger.info(f1_description)
+    logger.info(f"F1 score performance in test data was: {f1_description['f1_score']}")

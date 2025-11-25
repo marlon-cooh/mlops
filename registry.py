@@ -45,8 +45,8 @@ def best_experiment(tracking_uri:str, metric:str) -> str:
        )
        scores.update({r.info.run_id:r.data.metrics[metric] for r in runs})
     best_run_id = max(scores, key=scores.get)
-    best_score = scores[best_run_id]
-    logger.info(f"Experiment: {exp.name}, Best Run ID: {best_run_id}, Best {metric}: {best_score}")
+    # best_score = scores[best_run_id]
+    # logger.info(f"Experiment: {exp.name}, Best Run ID: {best_run_id}, Best {metric}: {best_score}")
     # else:
     #     # Best run based on f1 score
     #     scores = {r.info.run_id:r.data.metrics[metric] for r in runs}
